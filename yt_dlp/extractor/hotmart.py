@@ -31,9 +31,8 @@ class HotmartEmbedIE(InfoExtractor):
 
         # Encrypted url is 'urlEncrypted' instead of 'url'
         # See https://github.com/yt-dlp/yt-dlp/issues/3564 for initial discussion of design
-        url = traverse_obj(video_data, ('props', 'pageProps', 'playerData', 'assets', 0, 'url'))
-        thumbnail_url = traverse_obj(video_data, ('props', 'pageProps', 'playerData', 'urlThumbnail'))
-        timestamp = traverse_obj(video_data, ('props', 'pageProps', 'playerData', 'finishTranscodeDate'))
+        url = traverse_obj(video_data, ('props', 'pageProps', 'applicationData', 'mediaAssets', 0, 'url'))
+        thumbnail_url = traverse_obj(video_data, ('props', 'pageProps', 'applicationData', 'urlThumbnail'))
 
         formats, subtitles = self._extract_m3u8_formats_and_subtitles(url, video_id, 'mp4')
         self._sort_formats(formats)
@@ -42,7 +41,6 @@ class HotmartEmbedIE(InfoExtractor):
             'id': video_id,
             'video_id': video_id,
             'thumbnail': thumbnail_url,
-            'timestamp': timestamp,
             'formats': formats,
             'subtitles': subtitles
         }
