@@ -1,11 +1,12 @@
 import re
 
 from .common import InfoExtractor
-from .wistia import WistiaIE
 from ..utils import (
     ExtractorError,
     clean_html,
+    extract_attributes,
     get_element_by_class,
+    get_element_html_by_class,
     int_or_none,
     strip_or_none,
     urlencode_postdata,
@@ -61,8 +62,8 @@ class TeachableBaseIE(InfoExtractor):
         login_form = self._hidden_inputs(login_page)
 
         login_form.update({
-            'user[email]': username,
-            'user[password]': password,
+            'email': username,
+            'password': password,
         })
 
         post_url = self._search_regex(
@@ -90,7 +91,7 @@ class TeachableBaseIE(InfoExtractor):
             self._logged_in = True
             return
 
-        message = get_element_by_class('alert', response)
+        message = get_element_by_class('auth-flash-error', response)
         if message is not None:
             raise ExtractorError(
                 f'Unable to login: {clean_html(message)}', expected=True)
@@ -148,6 +149,39 @@ class TeachableIE(TeachableBaseIE):
                 yield f'{cls._URL_PREFIX}{url}'
                 raise cls.StopExtraction
 
+    def _create_hotmart_url(self, webpage, video_id, site):
+        # Original analysis here: https://github.com/yt-dlp/yt-dlp/issues/3564#issuecomment-1146929281
+
+        # If this fails someone needs to find the new location of the data-attachment-id to give to API
+        #  ... or the user doesn't have access to the lecture -- using older code to detect this
+        hotmart_container_element = get_element_html_by_class('hotmart_video_player', webpage)
+        if hotmart_container_element is None:
+            if any(re.search(p, webpage) for p in (
+                    r'class=["\']lecture-contents-locked',
+                    r'>\s*Lecture contents locked',
+                    r'id=["\']lecture-locked',
+                    # https://academy.tailoredtutors.co.uk/courses/108779/lectures/1955313
+                    r'class=["\'](?:inner-)?lesson-locked',
+                    r'>LESSON LOCKED<')):
+                self.raise_login_required('Lecture contents locked')
+            raise ExtractorError('Unable to find Hotmart video container')
+
+        # If this fails the API might use a different method of getting the hotmart video than the attachment-id
+        hotmart_container_attributes = extract_attributes(hotmart_container_element)
+        attachment_id = hotmart_container_attributes['data-attachment-id']
+
+        # Currently holds no security and will return good data to construct video link for any valid attachment-id,
+        #  else a 404
+        # Not adding error checking for video_id, signature, and teachable_application_key
+        #  because they seem to always be there unless there's the 404
+        # Tested one includes status: "READY", and upload_retries_cap_reached: false as well
+        hotmart_video_url_data = self._download_json(f'https://{site}/api/v2/hotmart/private_video', video_id,
+                                                     query={'attachment_id': attachment_id})
+
+        return (f'https://player.hotmart.com/embed/{hotmart_video_url_data["video_id"]}?'
+               f'signature={hotmart_video_url_data["signature"]}&'
+               f'token={hotmart_video_url_data["teachable_application_key"]}')
+
     def _real_extract(self, url):
         mobj = self._match_valid_url(url)
         site = mobj.group('site') or mobj.group('site_t')
@@ -161,19 +195,11 @@ class TeachableIE(TeachableBaseIE):
 
         webpage = self._download_webpage(url, video_id)
 
-        wistia_urls = WistiaIE._extract_embed_urls(url, webpage)
-        if not wistia_urls:
-            if any(re.search(p, webpage) for p in (
-                    r'class=["\']lecture-contents-locked',
-                    r'>\s*Lecture contents locked',
-                    r'id=["\']lecture-locked',
-                    # https://academy.tailoredtutors.co.uk/courses/108779/lectures/1955313
-                    r'class=["\'](?:inner-)?lesson-locked',
-                    r'>LESSON LOCKED<')):
-                self.raise_login_required('Lecture contents locked')
-            raise ExtractorError('Unable to find video URL')
+        hotmart_url = self._create_hotmart_url(webpage, video_id, site)
 
         title = self._og_search_title(webpage, default=None)
+
+        description = get_element_by_class('lecture-text-container', webpage)
 
         chapter = None
         chapter_number = None
@@ -196,16 +222,9 @@ class TeachableIE(TeachableBaseIE):
                 if chapter_number <= len(sections):
                     chapter = sections[chapter_number - 1]
 
-        entries = [{
-            '_type': 'url_transparent',
-            'url': wistia_url,
-            'ie_key': WistiaIE.ie_key(),
-            'title': title,
-            'chapter': chapter,
-            'chapter_number': chapter_number,
-        } for wistia_url in wistia_urls]
-
-        return self.playlist_result(entries, video_id, title)
+        # TODO: Make Hotmart Extractor and change ie to point to that, also maybe add other metadata?
+        return self.url_result(hotmart_url, ie='HotmartEmbed', url_transparent=True, video_id=video_id, video_title=title,
+                               chapter=chapter, chapter_number=chapter_number, webpage_url=url, description=description)
 
 
 class TeachableCourseIE(TeachableBaseIE):
