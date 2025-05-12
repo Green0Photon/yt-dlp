@@ -11,6 +11,7 @@ from ..utils import (
     strip_or_none,
     urlencode_postdata,
     urljoin,
+    traverse_obj
 )
 
 
@@ -100,7 +101,7 @@ class TeachableBaseIE(InfoExtractor):
 
 
 class TeachableIE(TeachableBaseIE):
-    _WORKING = False
+    _WORKING = True
     _VALID_URL = r'''(?x)
                     (?:
                         {}https?://(?P<site_t>[^/]+)|
@@ -276,7 +277,46 @@ class TeachableCourseIE(TeachableBaseIE):
             url = url[len(prefix):]
 
         webpage = self._download_webpage(url, course_id)
+        if next(re.finditer(
+            r'(?s)(?P<li><li[^>]+class=(["\'])(?:(?!\2).)*?section-item[^>]+>.+?</li>)',
+            webpage), None) is None:
+            return self._real_extract_sitev2(site, course_id, prefixed)
+        else:
+            return self._real_extract_sitev1(webpage, site, course_id, prefixed)
 
+    def _real_extract_sitev2(self, site, course_id, prefixed):
+        url_base = f'https://{site}/'
+
+        data_url = f'{url_base}layabout/courses/{course_id}/'
+        data_page = self._download_webpage(data_url, course_id)
+
+        course_data = self._parse_json(data_page, course_id)
+
+        entries = []
+        for syllabus in traverse_obj(course_data, ('course', 'syllabus')):
+            for lecture in syllabus.get('lectures'):
+                if lecture.get('primary_attachment_type') != 'video':
+                    continue
+
+                lecture_url = lecture.get('url')
+                lecture_id = lecture.get('id')
+                title = lecture.get('name')
+
+                entry_url = urljoin(url_base, lecture_url)
+                if prefixed:
+                    entry_url = self._URL_PREFIX + entry_url
+                entries.append(
+                    self.url_result(
+                        entry_url,
+                        ie=TeachableIE.ie_key(), video_id=lecture_id,
+                        video_title=clean_html(title)))
+
+        course_title = traverse_obj(course_data, ('course', 'name'))
+
+        return self.playlist_result(entries, course_id, course_title)
+
+
+    def _real_extract_sitev1(self, webpage, site, course_id, prefixed):
         url_base = f'https://{site}/'
 
         entries = []

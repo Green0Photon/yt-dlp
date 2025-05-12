@@ -33,7 +33,6 @@ class HotmartEmbedIE(InfoExtractor):
         thumbnail_url = traverse_obj(video_data, ('props', 'pageProps', 'applicationData', 'urlThumbnail'))
 
         formats, subtitles = self._extract_m3u8_formats_and_subtitles(url, video_id, 'mp4', headers={'Referer': 'https://player.hotmart.com/', 'Origin': 'https://player.hotmart.com'})
-        self._sort_formats(formats)
         for video_data in formats:
             video_data['http_headers'] = {'Referer': 'https://player.hotmart.com/', 'Origin': 'https://player.hotmart.com'}
 
